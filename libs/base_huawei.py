@@ -48,18 +48,11 @@ class BaseHuaWei(BaseClient):
     def __init__(self):
         super().__init__()
         self.url = 'https://devcloud.huaweicloud.com/bonususer/home/makebonus'
-        self.bot_key = 'AAGeo9nxTV86Kc41e7EBEvLv8MOax6Ye-pU'
-        self.bot_api = f'https://api.telegram.org/bot1378568996:{self.bot_key}/sendPhoto'
+        self.api = 'https://api-atcaoyufei.cloud.okteto.net'
         self.task_page = None
         self.client = None
         self.db = None
         self.col = None
-
-    async def before_run(self):
-        self.client = pymongo.MongoClient(
-            f'mongodb+srv://huawei:{self.mongo_pwd}@cluster0.9v4wz.azure.mongodb.net/?retryWrites=true&w=majority')
-        self.db = self.client.get_database('huawei_db')
-        self.col = self.db.get_collection('huawei')
 
     async def after_handler(self, **kwargs):
         credit = kwargs.get('result')
@@ -69,7 +62,7 @@ class BaseHuaWei(BaseClient):
             credit = int(credit.replace('码豆', '').strip())
 
         _id = f'{self.parent_user}_{username}' if self.parent_user else self.username
-        self.col.update_one({'_id': _id}, {'$set': {'credit': int(credit), 'update_time': self.get_bj_time()}}, True)
+        requests.post(f'{self.api}/huawei/save', {'name': _id, 'credit': credit})
 
     async def start(self):
         if self.page.url != self.url:
@@ -145,9 +138,9 @@ class BaseHuaWei(BaseClient):
         except asyncio.TimeoutError:
             file = f'/tmp/{int(time.time())}.png'
             await self.task_page.screenshot(path=file, fullPage=True)
-            files = {'photo': open(file, 'rb')}
-            requests.post(self.bot_api, files=files,
-                          data={'chat_id': '-400582710', 'caption': f'{self.username}->{task_fun}'}, timeout=10)
+            files = {'file': open(file, 'rb')}
+            requests.post(f'{self.api}/tg/photo', files=files,
+                          data={'chat_id': '-445291602', 'title': f'{self.username}->{task_fun}'}, timeout=10)
         except Exception as e:
             self.logger.error(e)
         finally:
@@ -437,8 +430,7 @@ class BaseHuaWei(BaseClient):
         await asyncio.sleep(5)
 
     async def week_new_project(self):
-        await self.task_page.waitForSelector('.modal.in', {'visible': True})
-        await asyncio.sleep(3)
+        await asyncio.sleep(5)
         try:
             notice = await self.task_page.querySelector('#declaration-notice')
             if notice:
@@ -457,6 +449,7 @@ class BaseHuaWei(BaseClient):
             projects = await self.task_page.querySelectorAll('.projects-container .projects-board-in-home')
             if projects and len(projects) and btn_list and len(btn_list):
                 await btn_list[0].click()
+                await asyncio.sleep(2)
             else:
                 if btn_list and len(btn_list):
                     await btn_list[1].click()
@@ -716,43 +709,6 @@ class BaseHuaWei(BaseClient):
         await self.task_page.click('#testtype_1')
         await asyncio.sleep(1)
 
-    async def add_address(self):
-        page = await self.browser.newPage()
-        await page.setUserAgent(self.ua)
-        await page.goto('https://devcloud.huaweicloud.com/bonususer/home/managebonus', {'waitUntil': 'load'})
-
-        await asyncio.sleep(2)
-        try:
-            await page.click('li#Add')
-            await asyncio.sleep(5)
-            no_data = await page.querySelectorAll('#add-table tbody tr')
-            if no_data and len(no_data):
-                return
-
-            await page.click('#add-adds')
-            await asyncio.sleep(1)
-            await page.type('#add-receive-name', '邹华')
-            await page.type('#add-receive-phone', '18664845253')
-            await page.type('#add-receive-area-info', '静安路6号55创意产业园3楼')
-            await page.click('#add-info .devui-checkbox')
-            await page.click('#ifDefault .devui-toggle')
-
-            items = await page.querySelectorAll('#add-receive-area .devui-dropup')
-            index = [13, 1, 5]
-            for i, item in enumerate(items):
-                await item.click()
-                await asyncio.sleep(1)
-                await page.click(f'.cdk-overlay-container .devui-dropdown-item:nth-child({index[i]})')
-                await asyncio.sleep(1)
-
-            await asyncio.sleep(1)
-            await page.click('#adds-dialog .devui-btn-stress')
-            await asyncio.sleep(2)
-        except Exception as e:
-            self.logger.error(e)
-            self.logger.error(page.url)
-        finally:
-            await page.close()
 
     async def sign_post(self):
         tid_list = [87703, 87513, 87948, 87424, 87445, 87587, 87972, 87972]
