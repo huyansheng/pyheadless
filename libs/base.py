@@ -8,9 +8,8 @@ import time
 from datetime import datetime, timezone, timedelta
 from typing import Optional
 
-import pymongo
 import requests
-from pyppeteer import launch
+from pyppeteer import launch, launcher
 from pyppeteer.browser import Browser
 from pyppeteer.page import Page
 
@@ -22,10 +21,11 @@ class BaseClient:
         self.logger = logging.getLogger(self.__class__.__name__)
         self.url = None
         self.username = None
+        self.password = None
         self.parent_user = None
         self.git = None
-        self.ua = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/81.0.4044.138 Safari/537.36'
-        self.mongo_pwd = '3LCmGDd9gXR3f5d0'
+        self.ua = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/87.0.4280.141 Safari/537.36'
+        self.api = 'https://api-atcaoyufei.cloud.okteto.net'
 
     async def before_run(self):
         pass
@@ -41,30 +41,27 @@ class BaseClient:
 
         username_list = kwargs.get('username').split(',')
         password_list = kwargs.get('password').split(',')
-        git_list = kwargs.get('git')
-
-        if git_list:
-            git_list = git_list.split(',')
 
         self.logger.warning(username_list)
 
         for i, username in enumerate(username_list):
-            git = git_list[i] if git_list and len(git_list) == len(username_list) else None
             password = password_list[0] if len(password_list) == 1 else password_list[i]
             self.username = username
-            self.git = git
+            self.password = password
             try:
                 await self.init(**kwargs)
-                result = await self.handler(username=username, password=password, git=git, parent=kwargs.get('parent'),
-                                            iam=kwargs.get('iam'))
+                result = await self.handler(**kwargs)
                 await self.after_handler(result=result, username=username)
             except Exception as e:
-                self.logger.warning(e)
+                self.logger.exception(e)
             finally:
                 await self.close()
                 await asyncio.sleep(3)
 
     async def init(self, **kwargs):
+        # launcher.DEFAULT_ARGS.remove('--enable-automation')
+        print(launcher.DEFAULT_ARGS)
+
         self.browser = await launch(ignorehttpserrrors=True, headless=kwargs.get('headless', True),
                                     args=['--disable-infobars', '--no-sandbox', '--start-maximized'])
         self.page = await self.browser.newPage()
@@ -73,11 +70,28 @@ class BaseClient:
         except Exception as e:
             self.logger.warning(e)
 
+        # tk = tkinter.Tk()
+        # width = tk.winfo_screenwidth()
+        # height = tk.winfo_screenheight()
+        # tk.quit()
+        # print(width, height)
         # await self.page.setRequestInterception(True)
         # self.page.on('request', self.intercept_request)
 
+        width = 1440
+        height = 900
         await self.page.setUserAgent(self.ua)
-        await self.page.setViewport({'width': 1200, 'height': 768})
+        await self.page.setViewport(viewport={'width': width, 'height': height})
+
+        js_text = """
+        () =>{
+            Object.defineProperties(navigator,{ webdriver:{ get: () => false } });
+            window.navigator.chrome = { runtime: {},  };
+            Object.defineProperty(navigator, 'languages', { get: () => ['en-US', 'en'] });
+            Object.defineProperty(navigator, 'plugins', { get: () => [1, 2, 3, 4, 5,6], });
+         }
+            """
+        await self.page.evaluateOnNewDocument(js_text)
 
         await self.page.goto(self.url, {'waitUntil': 'load'})
 
@@ -127,3 +141,10 @@ class BaseClient:
     def get_bj_time():
         utc_dt = datetime.utcnow().replace(tzinfo=timezone.utc)
         return utc_dt.astimezone(timezone(timedelta(hours=8))).strftime('%Y-%m-%d %H:%M:%S')
+
+    async def send_photo(self, page, title):
+        file = f'/tmp/{int(time.time())}.png'
+        await page.screenshot(path=file, fullPage=True)
+        files = {'file': open(file, 'rb')}
+        requests.post(f'{self.api}/tg/photo', files=files,
+                      data={'chat_id': '-445291602', 'title': f'{self.username}->{title}'}, timeout=20)
