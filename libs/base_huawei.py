@@ -49,6 +49,7 @@ class BaseHuaWei(BaseClient):
         self.task_page = None
         self.create_done = True
         self.home_url = None
+        self.cancel = False
 
     async def after_handler(self, **kwargs):
         credit = kwargs.get('result')
@@ -95,6 +96,9 @@ class BaseHuaWei(BaseClient):
     async def execute(self, element_id, element_list_name, task_node, is_tab=True, task_map=None):
         elements = await self.page.querySelectorAll(f'#{element_id} {element_list_name}')
         for i, element in enumerate(elements):
+            if self.cancel:
+                break
+
             if is_tab:
                 name = str(await element.Jeval('a', 'el => el.textContent')).strip()
                 task_list = task_map.get(name)
@@ -145,7 +149,7 @@ class BaseHuaWei(BaseClient):
             self.task_page = await self.get_new_page()
             await self.task_page.setUserAgent(self.ua)
         except Exception as e:
-            await self.send_photo(self.page, f'{task_fun} -> task_node')
+            self.logger.error(e)
             raise e
 
         try:
@@ -197,10 +201,11 @@ class BaseHuaWei(BaseClient):
             self.logger.warning(e)
 
     async def get_new_page(self):
-        await self.page.click('.modal.in .modal-footer .devui-btn')
         await asyncio.sleep(2)
+        await self.page.click('.modal.in .modal-footer .devui-btn')
+        await asyncio.sleep(5)
         page_list = await self.browser.pages()
-        await page_list[-1].setViewport({'width': 1920, 'height': 768})
+        await page_list[-1].setViewport({'width': self.width, 'height': self.height})
         return page_list[-1]
 
     async def close_page(self):
@@ -357,7 +362,7 @@ class BaseHuaWei(BaseClient):
 
         await asyncio.sleep(10)
         page_list = await self.browser.pages()
-        await page_list[-1].setViewport({'width': 1920, 'height': 768})
+        await page_list[-1].setViewport({'width': self.width, 'height': self.height})
         new_page = page_list[-1]
         await asyncio.sleep(2)
         await new_page.type('input.input-textarea-cn', self.username)
@@ -465,28 +470,11 @@ class BaseHuaWei(BaseClient):
             btn_list = await self.task_page.querySelectorAll('.quick-create-phoenix .devui-btn')
             await btn_list[0].click()
             await asyncio.sleep(2)
-
-            # projects = await self.task_page.querySelectorAll('.projects-container .projects-board-in-home')
-            # if projects and len(projects) and btn_list and len(btn_list) and False:
-            #     await btn_list[0].click()
-            #     await asyncio.sleep(2)
-            # else:
-            #     if btn_list and len(btn_list):
-            #         await btn_list[1].click()
-            #
-            #         await self.task_page.click('#home-page-add-project')
-            #         await asyncio.sleep(1)
-            #         await self.task_page.click('#projet_scrum')
-            #         await asyncio.sleep(1)
-            #         await self.task_page.type('#projectCreateFormProjectName', self.username)
-            #         await asyncio.sleep(0.5)
-            #         await self.task_page.click('#createProjectBtn')
-            #         await asyncio.sleep(3)
         except Exception as e:
-            self.logger.warning(e)
-            await self.close_page()
+            await self.send_photo(self.task_page, 'week_new_project')
+            self.logger.exception(e)
             await self.close()
-            exit(1)
+            self.cancel = True
 
     async def week_new_git(self):
         await asyncio.sleep(5)
@@ -607,53 +595,6 @@ class BaseHuaWei(BaseClient):
 
         await asyncio.sleep(15)
 
-    async def add_address(self):
-        page = await self.browser.newPage()
-        await page.setUserAgent(self.ua)
-        await page.setViewport({'width': 1920, 'height': 768})
-        await page.goto('https://devcloud.huaweicloud.com/bonususer/home/managebonus', {'waitUntil': 'load'})
-
-        async def area(_page):
-            _items = await _page.querySelectorAll('#add-receive-area .devui-dropup')
-            index = [13, 1, 7]
-            for i, item in enumerate(_items):
-                await item.click()
-                await asyncio.sleep(1)
-                await page.click(f'.cdk-overlay-container .devui-dropdown-item:nth-child({index[i]})')
-                await asyncio.sleep(1)
-
-        try:
-            await asyncio.sleep(2)
-            await page.click('li#Add')
-            await asyncio.sleep(5)
-
-            items = await page.querySelectorAll('div.devui-table-view tbody tr')
-            if items and len(items):
-                await page.click('#edit-0')
-                await asyncio.sleep(1)
-            else:
-                await page.click('#add-adds')
-                await asyncio.sleep(1)
-                await page.type('#add-receive-name', '邹华')
-                await page.type('#add-receive-phone', '18664845253')
-                await page.click('#ifDefault .devui-toggle')
-
-            await page.evaluate(
-                '''() =>{ document.getElementById('add-receive-area-info').value = ''; }''')
-            await page.type('#add-receive-area-info', '雄楚大道28号-校友创新中心-MSC江宏中心-3楼壹佰网络')
-            await area(page)
-            await asyncio.sleep(1)
-
-            await page.click('#add-info .devui-checkbox')
-
-            await asyncio.sleep(1)
-            await page.click('#adds-dialog .devui-btn-stress')
-            await asyncio.sleep(2)
-        except Exception as e:
-            self.logger.error(e)
-            self.logger.error(page.url)
-        finally:
-            await page.close()
 
     async def delete_function(self):
         page = await self.browser.newPage()
@@ -661,7 +602,7 @@ class BaseHuaWei(BaseClient):
                     'https://console.huaweicloud.com/functiongraph/?region=cn-south-1#/serverless/functionList']
         for _url in url_list:
             await page.goto(_url, {'waitUntil': 'load'})
-            await page.setViewport({'width': 1920, 'height': 768})
+            await page.setViewport({'width': self.width, 'height': self.height})
             await asyncio.sleep(5)
             elements = await page.querySelectorAll('td[style="white-space: normal;"]')
             for element in elements:
@@ -676,7 +617,7 @@ class BaseHuaWei(BaseClient):
                         await page.click('.ti3-modal-footer .ti3-btn-danger')
                         await asyncio.sleep(1)
                     except Exception as e:
-                        self.logger.error(e)
+                        self.logger.exception(e)
 
         await page.close()
         await asyncio.sleep(1)
@@ -748,7 +689,7 @@ class BaseHuaWei(BaseClient):
         try:
             await page.goto('https://console.huaweicloud.com/apig/?region=cn-north-4#/apig/multiLogical/openapi/list',
                             {'waitUntil': 'load'})
-            await page.setViewport({'width': 1920, 'height': 768})
+            await page.setViewport({'width': self.width, 'height': self.height})
             await asyncio.sleep(10)
             elements = await page.querySelectorAll('#openapi_list tr')
             if len(elements) < 2:
@@ -781,7 +722,7 @@ class BaseHuaWei(BaseClient):
         try:
             await page.goto('https://console.huaweicloud.com/apig/?region=cn-north-4#/apig/multiLogical/openapi/group',
                             {'waitUntil': 'load'})
-            await page.setViewport({'width': 1920, 'height': 768})
+            await page.setViewport({'width': self.width, 'height': self.height})
             await asyncio.sleep(8)
             elements = await page.querySelectorAll('#openapi_group tbody tr')
             if len(elements) < 1:
