@@ -30,11 +30,11 @@ class HuaWei(BaseHuaWei):
         utc_dt = datetime.utcnow().replace(tzinfo=timezone.utc)
         h = int(utc_dt.astimezone(timezone(timedelta(hours=8))).strftime('%H'))
 
-        if h <= 12:
+        if h <= 20:
             await self.check_project()
             await self.start()
 
-        if h > 13:
+        if h > 21:
             await self.delete_project()
             await self.delete_function()
             await self.delete_api()
