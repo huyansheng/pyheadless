@@ -1,10 +1,12 @@
 import asyncio
+import json
 import os
 import random
 import string
 import time
 
 import requests
+from pyppeteer.network_manager import Response
 
 from libs.base import BaseClient
 
@@ -51,16 +53,22 @@ class BaseHuaWei(BaseClient):
         self.home_url = None
         self.cancel = False
 
-    async def after_handler(self, **kwargs):
-        credit = kwargs.get('result')
+    async def after_handler(self, result, **kwargs):
+        if not result:
+            return
+        credit = result.get('credit')
+        _uid = result.get('uid')
         username = kwargs.get('username')
-        if credit:
-            self.logger.warning(f"{username} -> {credit}\n")
-            if type(credit) == str:
-                credit = int(credit.replace('码豆', '').strip())
+        self.logger.warning(f"{username} -> {credit}\n")
+        if type(credit) == str:
+            credit = int(credit.replace('码豆', '').strip())
 
-            _id = f'{self.parent_user}_{username}' if self.parent_user else self.username
-            requests.post(f'{self.api}/huawei/save', {'name': _id, 'credit': credit})
+        cookies = await self.get_cookies()
+        address_id = await self.get_address()
+        _id = f'{self.parent_user}_{username}' if self.parent_user else self.username
+        cookies = json.dumps(cookies)
+        data = {'name': _id, 'credit': credit, 'address_id': address_id, 'cookies': cookies, 'uid': _uid}
+        requests.post(f'{self.api}/huawei/save', json=data)
 
     async def start(self):
         if self.page.url != self.url:
@@ -168,23 +176,32 @@ class BaseHuaWei(BaseClient):
             return True
 
     async def get_credit(self):
+        result = {'credit': 0, 'uid': ''}
+
+        async def intercept_response(response: Response):
+            global uid
+            url = response.url
+            if 'bonususer/rest/me' in url:
+                data = json.loads(await response.text())
+                result['uid'] = data.get('id')
+
+        self.page.on('response', intercept_response)
+
         for i in range(3):
             if self.page.url != self.url:
                 await self.page.goto(self.url, {'waitUntil': 'load'})
             else:
                 await self.page.reload({'waitUntil': 'load'})
+
             await asyncio.sleep(5)
+
             try:
-                return str(await self.page.Jeval('#homeheader-coins', 'el => el.textContent')).replace('码豆', '').strip()
+                s = await self.page.Jeval('#homeheader-coins', 'el => el.textContent')
+                result['credit'] = str(s).replace('码豆', '').strip()
+                break
             except Exception as e:
                 self.logger.debug(e)
-        return 0
-
-    async def print_credit(self, user_name):
-        new_credit = await self.get_credit()
-        self.logger.info(f'码豆: {new_credit}')
-        message = f'{user_name} -> {new_credit}'
-        self.send_message(message, '华为云码豆')
+        return result
 
     async def sign_task(self):
         try:
@@ -205,7 +222,7 @@ class BaseHuaWei(BaseClient):
         await self.page.click('.modal.in .modal-footer .devui-btn')
         await asyncio.sleep(5)
         page_list = await self.browser.pages()
-        await page_list[-1].setViewport({'width': self.width, 'height': self.height})
+        await page_list[-1].setViewport({'width': self.width + 560, 'height': self.height})
         return page_list[-1]
 
     async def close_page(self):
@@ -216,7 +233,7 @@ class BaseHuaWei(BaseClient):
                 await page.close()
 
     async def api_explorer_task(self):
-        await asyncio.sleep(3)
+        await asyncio.sleep(2)
         html = str(await self.task_page.JJeval('.userInfo', '(els) => els.map(el => el.outerHTML)'))
         if html.find('English') != -1:
             items = await self.task_page.querySelectorAll('.userInfo')
@@ -224,6 +241,12 @@ class BaseHuaWei(BaseClient):
             await asyncio.sleep(2)
             await self.task_page.click('.cdk-overlay-container .dropdown-item')
             await asyncio.sleep(5)
+
+        url = 'https://apiexplorer.developer.huaweicloud.com/apiexplorer/overview'
+        if self.task_page.url == url:
+            url = 'https://apiexplorer.developer.huaweicloud.com/apiexplorer/doc?product=DevStar&api=ListPublishedTemplates'
+            await self.task_page.goto(url, {'waitUntil': 'load'})
+            await asyncio.sleep(3)
 
         await self.task_page.click('#debug')
         await asyncio.sleep(3)
@@ -432,10 +455,14 @@ class BaseHuaWei(BaseClient):
         await asyncio.sleep(5)
 
     async def pipeline_task(self):
-        await asyncio.sleep(1)
+        items = await self.task_page.querySelectorAll('div.devui-table-view tbody tr')
+        if len(items) <= 0:
+            return
+
         await self.task_page.evaluate(
-            '''() =>{ document.querySelector('div.devui-table-view tbody tr:nth-child(1) .icon-run').click(); }''')
+            '''() =>{ document.querySelector('div.devui-table-view tbody tr:nth-child(1) .pipeline-run').click(); }''')
         await asyncio.sleep(1)
+
         await self.task_page.click('.modal.in .devui-btn-primary')
         await asyncio.sleep(1)
         await self.task_page.click('.modal.in .devui-btn-primary')
@@ -528,9 +555,18 @@ class BaseHuaWei(BaseClient):
 
     async def new_test_task(self):
         await asyncio.sleep(2)
-        await self.task_page.click('#global-guidelines .icon-close')
+        try:
+            await self.task_page.click('#global-guidelines .icon-close')
+        except Exception as e:
+            self.logger.debug(e)
+
         await asyncio.sleep(1)
-        await self.task_page.click('.guide-container .icon-close')
+
+        try:
+            await self.task_page.click('.guide-container .icon-close')
+        except Exception as e:
+            self.logger.debug(e)
+
         await asyncio.sleep(1)
         await self.task_page.waitForSelector('div.create-case', {'visible': True})
         await self.task_page.click('div.create-case')
@@ -595,29 +631,73 @@ class BaseHuaWei(BaseClient):
 
         await asyncio.sleep(15)
 
+    async def get_address(self):
+        page = await self.browser.newPage()
+        url = 'https://devcloud.huaweicloud.com/bonususer/v2/address/queryPageList?page_no=1&page_size=5&_=1620962399910'
+        res = await page.goto(url, {'waitUntil': 'load'})
+        try:
+            data = await res.json()
+            if data.get('error') or not data.get('result'):
+                await asyncio.sleep(1)
+                return ''
+            address = data.get('result').get('result')
+            if type(address) == list:
+                address = address[0]
+                return address.get('id')
+        except Exception as e:
+            self.logger.error(e)
+        finally:
+            await page.close()
+        return ''
 
     async def delete_function(self):
         page = await self.browser.newPage()
-        url_list = ['https://console.huaweicloud.com/functiongraph/?region=cn-north-4#/serverless/functionList',
-                    'https://console.huaweicloud.com/functiongraph/?region=cn-south-1#/serverless/functionList']
+
+        url_list = ['https://console.huaweicloud.com/functiongraph/?region=cn-south-1#/serverless/functionList',
+                    'https://console.huaweicloud.com/functiongraph/?region=cn-north-4#/serverless/functionList']
+
         for _url in url_list:
             await page.goto(_url, {'waitUntil': 'load'})
-            await page.setViewport({'width': self.width, 'height': self.height})
-            await asyncio.sleep(5)
-            elements = await page.querySelectorAll('td[style="white-space: normal;"]')
-            for element in elements:
-                a_list = await element.querySelectorAll('a.ti3-action-menu-item')
+            await page.setViewport({'width': self.width + 560, 'height': self.height})
+            try:
+                await page.waitForSelector('.ti3-action-menu-item', {'timeout': 10000})
+            except Exception as e:
+                self.logger.debug(e)
+                continue
+
+            while 1:
+                elements = await page.querySelectorAll('td[style="white-space: normal;"]')
+                if not elements or not len(elements):
+                    self.logger.info('no functions.')
+                    break
+
+                a_list = await elements[0].querySelectorAll('a.ti3-action-menu-item')
                 # content = str(await (await element.getProperty('textContent')).jsonValue()).strip()
                 if len(a_list) == 2:
                     try:
                         await a_list[1].click()
                         await asyncio.sleep(1)
+
+                        _input = await page.querySelector('.modal-confirm-text input[type="text"]')
+                        if not _input:
+                            await asyncio.sleep(3)
+                            continue
+
                         await page.type('.modal-confirm-text input[type="text"]', 'DELETE')
                         await asyncio.sleep(1)
                         await page.click('.ti3-modal-footer .ti3-btn-danger')
                         await asyncio.sleep(1)
+
+                        buttons = await page.querySelectorAll('.ti3-modal-footer [type="button"]')
+                        if buttons and len(buttons):
+                            await buttons[1].click()
+                            await asyncio.sleep(2)
+
                     except Exception as e:
-                        self.logger.exception(e)
+                        self.logger.debug(e)
+                        await asyncio.sleep(1)
+
+            await asyncio.sleep(1)
 
         await page.close()
         await asyncio.sleep(1)
