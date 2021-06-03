@@ -54,8 +54,12 @@ class HuaWei(BaseHuaWei):
         await asyncio.sleep(2)
 
         item = await self.page.querySelector(".hwid-list-row-active")
-        await item.click()
-        await asyncio.sleep(1)
+        if item:
+            await item.click()
+            await asyncio.sleep(1)
+
+            await self.page.type('.hwid-input-pwd', password, {'delay': 10})
+            await asyncio.sleep(2)
 
         await self.page.type('.hwid-input-pwd', password, {'delay': 10})
         await asyncio.sleep(2)
